@@ -1,0 +1,216 @@
+
+/*
+ * LAMPA IDEAL BUNDLE — CINEMATIC
+ * Interface MOD + Cardify + TorrServer Settings
+ * Logos + Quality/HDR + TorServer + Jackett
+ * Без автовыбора торрента
+ */
+(function () {
+    'use strict';
+
+    if (window.IdealBundle) return;
+    window.IdealBundle = true;
+
+    var CONFIG = {
+        torrserver: 'http://192.168.50.120:8090',
+        jackett: 'https://jac-red.ru',
+        checkInterval: 15000,
+        requestTimeout: 5000
+    };
+
+    var PLUGINS = [
+        // Исходные плагины
+        'https://plugin.rootu.top/ts-preload.js',
+        'https://plugin.rootu.top/rutube.js',
+        'https://bylampa.github.io/tv.js',
+        'https://lampame.github.io/main/newcategory.js',
+        'https://plugin.rootu.top/tmdb.js',
+        'https://andreyurl54.github.io/diesel5/tricks.js',
+
+        // Интерфейс MOD (вместо interface_mod_new.js)
+        'https://lampaplugins.github.io/store/interface_mod.js',
+
+        // Альтернативные карточки
+        'https://lampaplugins.github.io/store/cardify.js',
+
+        // Настройки TorrServer в Lampa
+        'https://lampaplugins.github.io/store/pavelpikta/torrserver-settings.js',
+
+        // Логотипы фильмов
+        'https://lampaplugins.github.io/store/logo.js',
+
+        // Логотипы студий, рейтинги и бейджи качества
+        'https://darkestclouds.github.io/applecation.min.js'
+    ];
+
+    var state = {
+        torrserverOnline: false,
+        initialized: false,
+        timers: []
+    };
+
+    function log(message, error) {
+        if (window.console && console.log) {
+            console.log('[IdealBundle] ' + message, error || '');
+        }
+    }
+
+    function later(fn, delay) {
+        var timer = setTimeout(fn, delay);
+        state.timers.push(timer);
+        return timer;
+    }
+
+    function waitLampa(callback, attempts) {
+        attempts = attempts || 0;
+
+        if (window.Lampa &&
+            Lampa.Utils &&
+            Lampa.Listener &&
+            Lampa.Storage) {
+            callback();
+            return;
+        }
+
+        if (attempts >= 100) {
+            log('Lampa API не появился за 20 секунд');
+            return;
+        }
+
+        later(function () {
+            waitLampa(callback, attempts + 1);
+        }, 200);
+    }
+
+    // Настройки TorServer и Jackett
+    function applySettings() {
+        Lampa.Storage.set('torrserver_use', true);
+        Lampa.Storage.set('torrserver_url', CONFIG.torrserver);
+
+        Lampa.Storage.set('parser_use', true);
+        Lampa.Storage.set('parser_torrent_type', 'jackett');
+        Lampa.Storage.set('jackett_url', CONFIG.jackett);
+    }
+
+    // Загрузка сторонних расширений
+    function loadPlugins() {
+        PLUGINS.forEach(function (url) {
+            try {
+                Lampa.Utils.putScriptAsync([url], function () {
+                    log('Загрузка завершена: ' + url);
+                });
+            } catch (error) {
+                log('Ошибка загрузки: ' + url, error);
+            }
+        });
+    }
+
+    // Кнопка статуса TorServer
+    function initHeader() {
+        if (!window.jQuery) return;
+
+        var $ = window.jQuery;
+        var $header = $('.head__actions').first();
+
+        if (!$header.length) return;
+
+        if (!$('#ts_status').length) {
+            var $button = $(
+                '<div class="head__action" id="ts_status">' +
+                    '<div class="head__icon">TS ...</div>' +
+                '</div>'
+            );
+
+            $button.css('cursor', 'pointer');
+
+            $button.on(
+                'hover:enter hover:click hover:touch',
+                function (event) {
+                    if (event && event.preventDefault) {
+                        event.preventDefault();
+                    }
+
+                    Lampa.Noty.show(
+                        state.torrserverOnline
+                            ? 'TorServer онлайн'
+                            : 'TorServer оффлайн'
+                    );
+                }
+            );
+
+            $header.append($button);
+        }
+
+        checkTorrServer();
+    }
+
+    function checkTorrServer() {
+        if (!window.jQuery) return;
+
+        var $icon = window.jQuery('#ts_status .head__icon');
+
+        if (!$icon.length) return;
+
+        window.jQuery.ajax({
+            url: CONFIG.torrserver + '/echo',
+            method: 'GET',
+            cache: false,
+            timeout: CONFIG.requestTimeout
+        })
+        .done(function (response) {
+            state.torrserverOnline =
+                String(response).indexOf('MatriX') !== -1;
+
+            $icon.text(
+                state.torrserverOnline ? 'TS OK' : 'TS ?'
+            );
+        })
+        .fail(function () {
+            state.torrserverOnline = false;
+            $icon.text('TS OFF');
+        });
+    }
+
+    function waitHeader(attempts) {
+        attempts = attempts || 0;
+
+        if (window.jQuery &&
+            window.jQuery('.head__actions').length) {
+            initHeader();
+            return;
+        }
+
+        if (attempts >= 100) {
+            log('Шапка не появилась за 30 секунд');
+            return;
+        }
+
+        later(function () {
+            waitHeader(attempts + 1);
+        }, 300);
+    }
+
+    // Запуск
+    waitLampa(function () {
+        if (state.initialized) return;
+        state.initialized = true;
+
+        applySettings();
+        loadPlugins();
+
+        Lampa.Listener.follow('app', function (event) {
+            if (event.type === 'ready') {
+                applySettings();
+                waitHeader();
+            }
+        });
+
+        waitHeader();
+
+        state.timers.push(
+            setInterval(checkTorrServer, CONFIG.checkInterval)
+        );
+
+        log('Ideal Bundle запущен');
+    });
+})();
